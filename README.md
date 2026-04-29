@@ -23,39 +23,58 @@ api/
 
 ## 🚀 Instalación y Configuración
 
-```bash
-# Con PHP built-in server (desarrollo)
-cd api/
-php -S 0.0.0.0:41062
+La arquitectura se divide en dos partes: el recolector que corre en el sistema host y la API que se sirve mediante un contenedor Docker.
 
-# O colocar en tu DocumentRoot (ej: /www/api/)
-```
+**Variables de Entorno:**
+El sistema utiliza tres variables clave para funcionar:
+* `SYSMETRICS`: Ruta base absoluta en el host donde está el script y la BD.
+* `SYSMETRICS_INTERVAL`: Segundos que transcurren entre cada recolección (ej: 10).
+* `SYSMETRICS_WEB`: Ruta interna dentro del contenedor Docker donde la API buscará la BD.
 
-**Variables de Entorno y Base de Datos:**
-El sistema de recolección (`collector.sh`) y la API buscan la base de datos y sus propios directorios basándose en variables de entorno *system-wide*:
-* `SYSMETRICS`: Ruta base absoluta de los scripts del sistema (donde también se guardará `metrics.db`).
-* `SYSMETRICS_WEB`: Ruta base web.
+### Paso 1: Configurar el Host (Recolector)
 
-**1. Hacer las variables permanentes en el sistema:**
-Para que sobrevivan a los reinicios y sean la única fuente de verdad, añádelas al archivo `/etc/environment`. 
+Haz que las variables del sistema host sean permanentes editando `/etc/environment`. 
 
 ```bash
 sudo nano /etc/environment
 ```
-Añade tus rutas al final del archivo (sin usar la palabra `export`):
+Añade las rutas y el intervalo al final del archivo (sin usar la palabra `export`):
 ```text
 SYSMETRICS="/media/novedades/www/api"
-SYSMETRICS_WEB="/www/api"
+SYSMETRICS_INTERVAL="10"
 ```
 
-**2. Automatización con Cron:**
-Como `cron` arranca en un entorno aislado que no lee `/etc/environment` por defecto, hay que forzar la lectura y exportación de las variables en la propia instrucción del crontab. 
+### Paso 2: Automatización con Cron (Loop Continuo)
 
-Ejecuta `crontab -e` y añade las siguientes tareas:
+El recolector se ejecuta en un bucle infinito adaptativo para recolectar datos cada `SYSMETRICS_INTERVAL` segundos. El `cron` solo se encarga de vigilar que el proceso esté vivo y levantarlo si se cae, evitando ejecuciones superpuestas.
+
+Ejecuta `crontab -e` y añade esta única tarea:
 ```text
-# Recolección cada 30 segundos forzando la exportación del entorno
-* * * * * set -a; . /etc/environment; "$SYSMETRICS/collector.sh"
-* * * * * sleep 30 && set -a; . /etc/environment; "$SYSMETRICS/collector.sh"
+# Vigila el recolector cada minuto. Si no está corriendo (pgrep), lo levanta inyectando el entorno.
+* * * * * set -a; . /etc/environment; pgrep -f collector.sh > /dev/null || "$SYSMETRICS/collector.sh" >> /var/log/collector.log 2>&1
+```
+
+### Paso 3: Configurar el Servidor Web (Docker)
+
+El servidor web (PHP/Apache) corre aislado en Docker, por lo que no puede leer `/etc/environment`. Debemos pasarle su variable a través de un archivo `.env`.
+
+Crea o edita tu archivo en `/etc/docker/xampp/.env`:
+```text
+SYSMETRICS_WEB=/www/api
+```
+
+Levanta el contenedor montando el volumen donde el recolector guarda la base de datos e inyectando el archivo de entorno:
+```bash
+docker run -d \
+	--name xampp \
+	--restart always \
+	--env-file /etc/docker/xampp/.env \
+	-e PUID=0 \
+	-e PGID=0 \
+	-p 41061:22 \
+	-p 41062:80 \
+	-v /media/novedades/www:/www \
+	tomsik68/xampp:latest
 ```
 
 ---

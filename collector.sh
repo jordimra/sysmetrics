@@ -2,9 +2,8 @@
 # =============================================================
 # collector.sh — Recolector de métricas del sistema
 #
-# Cron cada 30 segundos:
+# Cron inicial único:
 #   * * * * * /$SYSMETRICS/collector.sh
-#   * * * * * sleep 30 && /$SYSMETRICS/collector.sh
 # =============================================================
 
 set -euo pipefail
@@ -15,6 +14,7 @@ then
 	exit 1
 fi
 
+IV="${SYSMETRICS_INTERVAL:-10}"
 DB="${SYSMETRICS}/metrics.db";
 TS=$(date +%s)   # Unix epoch — PHP convierte a hora local
 
@@ -26,165 +26,176 @@ fi
 
 sql() { sqlite3 "$DB" "$1"; }
 
-# =============================================================
-# CPU
-# =============================================================
+# Bucle infinito: se ejecuta cada 10 segundos
+while true; do
+    # Guardamos el tiempo de inicio para calcular el drift
+    start_time=$(date +%s)
+        
+    # =============================================================
+    # CPU
+    # =============================================================
 
-read -r load1 load5 load15 procs_frac _ < /proc/loadavg
+    read -r load1 load5 load15 procs_frac _ < /proc/loadavg
 
-read_stat() { awk '/^cpu / {print $2,$3,$4,$5,$6,$7,$8}' /proc/stat; }
-stat1=$(read_stat); sleep 0.5; stat2=$(read_stat)
+    read_stat() { awk '/^cpu / {print $2,$3,$4,$5,$6,$7,$8}' /proc/stat; }
+    stat1=$(read_stat); sleep 0.5; stat2=$(read_stat)
 
-load_percent=$(awk -v a="$stat1" -v b="$stat2" 'BEGIN {
-    split(a,x); split(b,y)
-    for(i=1;i<=7;i++){ta+=x[i];tb+=y[i]}
-    dt=tb-ta; di=y[4]-x[4]
-    printf "%.2f", (dt==0)?0:(1-di/dt)*100
-}')
+    load_percent=$(awk -v a="$stat1" -v b="$stat2" 'BEGIN {
+        split(a,x); split(b,y)
+        for(i=1;i<=7;i++){ta+=x[i];tb+=y[i]}
+        dt=tb-ta; di=y[4]-x[4]
+        printf "%.2f", (dt==0)?0:(1-di/dt)*100
+    }')
 
-freq_mhz="NULL"
-if [[ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]]; then
-    khz=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq)
-    freq_mhz=$(awk "BEGIN{printf \"%.1f\",$khz/1000}")
-else
-    f=$(awk '/^cpu MHz/{printf "%.1f",$4;exit}' /proc/cpuinfo)
-    [[ -n "$f" ]] && freq_mhz="$f"
-fi
-
-temperature="NULL"
-for zone in /sys/class/thermal/thermal_zone*/temp; do
-    [[ -r "$zone" ]] || continue
-    val=$(cat "$zone")
-    if (( val > 0 )); then
-        temperature=$(awk "BEGIN{printf \"%.1f\",$val/1000}")
-        break
+    freq_mhz="NULL"
+    if [[ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]]; then
+        khz=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq)
+        freq_mhz=$(awk "BEGIN{printf \"%.1f\",$khz/1000}")
+    else
+        f=$(awk '/^cpu MHz/{printf "%.1f",$4;exit}' /proc/cpuinfo)
+        [[ -n "$f" ]] && freq_mhz="$f"
     fi
+
+    temperature="NULL"
+    for zone in /sys/class/thermal/thermal_zone*/temp; do
+        [[ -r "$zone" ]] || continue
+        val=$(cat "$zone")
+        if (( val > 0 )); then
+            temperature=$(awk "BEGIN{printf \"%.1f\",$val/1000}")
+            break
+        fi
+    done
+
+    sql "INSERT INTO cpu(ts,load_percent,load_1m,load_5m,load_15m,freq_mhz,temperature)
+        VALUES($TS,$load_percent,$load1,$load5,$load15,$freq_mhz,$temperature);"
+
+    # =============================================================
+    # MEMORIA
+    # =============================================================
+
+    eval "$(awk '
+        /^MemTotal:/     {total=$2}
+        /^MemFree:/      {free=$2}
+        /^MemAvailable:/ {avail=$2}
+        /^Buffers:/      {buffers=$2}
+        /^Cached:/       {cached=$2}
+        /^SReclaimable:/ {srec=$2}
+        /^SwapTotal:/    {stotal=$2}
+        /^SwapFree:/     {sfree=$2}
+        END {
+            c=cached+srec; used=total-free-buffers-c
+            if(used<0)used=0
+            printf "MT=%d MU=%d MF=%d MA=%d MC=%d ST=%d SU=%d\n",
+                total,used,free,avail,c,stotal,stotal-sfree
+        }' /proc/meminfo)"
+
+    sql "INSERT INTO memory(ts,total,used,free,available,cached,swap_total,swap_used)
+        VALUES($TS,$MT,$MU,$MF,$MA,$MC,$ST,$SU);"
+
+    # =============================================================
+    # DISCO
+    # =============================================================
+
+    while IFS= read -r line; do
+        read -r device total_kb used_kb avail_kb mount <<< "$line"
+        free_kb=$(( total_kb - used_kb ))
+
+        inode_line=$(df -Pi "$mount" 2>/dev/null | tail -1)
+        read -r _ itotal iused _ _ _ <<< "$inode_line"
+        itotal=${itotal:-0}; iused=${iused:-0}
+
+        mount_esc="${mount//\'/\'\'}"
+        device_esc="${device//\'/\'\'}"
+
+        sql "INSERT INTO disk(ts,mount,device,total,used,free,inodes_total,inodes_used)
+            VALUES($TS,'$mount_esc','$device_esc',$total_kb,$used_kb,$free_kb,$itotal,$iused);"
+
+    done < <(df -Pk 2>/dev/null | tail -n +2 | awk '
+        {device=$1; total=$2; used=$3; avail=$4; mount=$NF}
+        device ~ /^(tmpfs|devtmpfs|udev|none|overlay|shm)/ {next}
+        mount  ~ /^\/(sys|proc|dev|run\/user)/              {next}
+        {print device, total, used, avail, mount}
+    ')
+
+    # =============================================================
+    # RED
+    # =============================================================
+
+    awk 'NR>2{
+        gsub(/:/," ")
+        iface=$1; if(iface==""||iface=="lo")next
+        printf "%s %s %s %s %s %s %s %s %s\n",
+            iface,$2,$10,$3,$11,$4,$12,$5,$13
+    }' /proc/net/dev | while read -r iface rx_b tx_b rx_p tx_p rx_e tx_e rx_d tx_d; do
+        iface_esc="${iface//\'/\'\'}"
+        sql "INSERT INTO network(ts,iface,rx_bytes,tx_bytes,rx_packets,tx_packets,rx_errors,tx_errors,rx_dropped,tx_dropped)
+            VALUES($TS,'$iface_esc',$rx_b,$tx_b,$rx_p,$tx_p,$rx_e,$tx_e,$rx_d,$tx_d);"
+    done
+
+    # =============================================================
+    # PROCESOS
+    # =============================================================
+
+    eval "$(awk '
+        /^State:/ {
+            s=substr($2,1,1)
+            if(s=="R")r++
+            else if(s=="S"||s=="D")sl++
+            else if(s=="T")st++
+            else if(s=="Z")z++
+            total++
+        }
+        /^Threads:/ {threads+=$2}
+        END {
+            printf "PROC_TOTAL=%d PROC_RUN=%d PROC_SLEEP=%d PROC_STOP=%d PROC_ZOM=%d PROC_THR=%d\n",
+                total,r+0,sl+0,st+0,z+0,threads
+        }
+    ' /proc/[0-9]*/status 2>/dev/null)"
+
+    # Top CPU: usa ps (más fiable que parsear /proc manualmente para %)
+    cpu_top=$(ps -eo pid,pcpu --no-headers --sort=-pcpu 2>/dev/null | awk 'NR==1{print $1,$2}')
+    cpu_top_pid=$(awk '{print $1}' <<< "$cpu_top")
+    cpu_top_pct=$(awk '{print $2}' <<< "$cpu_top")
+    cpu_top_pid=${cpu_top_pid:-NULL}; cpu_top_pct=${cpu_top_pct:-NULL}
+
+    # Top MEM
+    mem_top=$(ps -eo pid,pmem --no-headers --sort=-pmem 2>/dev/null | awk 'NR==1{print $1,$2}')
+    mem_top_pid=$(awk '{print $1}' <<< "$mem_top")
+    mem_top_pct=$(awk '{print $2}' <<< "$mem_top")
+    mem_top_pid=${mem_top_pid:-NULL}; mem_top_pct=${mem_top_pct:-NULL}
+
+    sql "INSERT INTO processes(ts,total,running,sleeping,stopped,zombie,threads,cpu_top_pid,cpu_top_pct,mem_top_pid,mem_top_pct)
+        VALUES($TS,$PROC_TOTAL,$PROC_RUN,$PROC_SLEEP,$PROC_STOP,$PROC_ZOM,$PROC_THR,$cpu_top_pid,$cpu_top_pct,$mem_top_pid,$mem_top_pct);"
+
+    # =============================================================
+    # SISTEMA GENERAL
+    # =============================================================
+
+    uptime_sec=$(awk '{printf "%d",$1}' /proc/uptime)
+    users_logged=$(who 2>/dev/null | wc -l)
+    read -r _l1 _ _ procs_str _ < /proc/loadavg
+    procs_total=$(echo "$procs_str" | cut -d/ -f2)
+
+    sql "INSERT INTO system_info(ts,uptime_sec,load_1m,users_logged,procs_total)
+        VALUES($TS,$uptime_sec,$load1,$users_logged,$procs_total);"
+
+    # =============================================================
+    # Retención (7 días, ~1/2880 ejecuciones)
+    # =============================================================
+
+    if (( RANDOM % 2880 == 0 )); then
+        RETAIN=$(( TS - 7*86400 ))
+        sql "DELETE FROM cpu         WHERE ts < $RETAIN;
+            DELETE FROM memory      WHERE ts < $RETAIN;
+            DELETE FROM disk        WHERE ts < $RETAIN;
+            DELETE FROM network     WHERE ts < $RETAIN;
+            DELETE FROM processes   WHERE ts < $RETAIN;
+            DELETE FROM system_info WHERE ts < $RETAIN;
+            VACUUM;"
+    fi
+
+    elapsed=$(( $(date +%s) - start_time ))
+	sleep_time=$(( IV - elapsed ))
+	
+	[[ $sleep_time -gt 0 ]] && sleep $sleep_time
 done
-
-sql "INSERT INTO cpu(ts,load_percent,load_1m,load_5m,load_15m,freq_mhz,temperature)
-     VALUES($TS,$load_percent,$load1,$load5,$load15,$freq_mhz,$temperature);"
-
-# =============================================================
-# MEMORIA
-# =============================================================
-
-eval "$(awk '
-    /^MemTotal:/     {total=$2}
-    /^MemFree:/      {free=$2}
-    /^MemAvailable:/ {avail=$2}
-    /^Buffers:/      {buffers=$2}
-    /^Cached:/       {cached=$2}
-    /^SReclaimable:/ {srec=$2}
-    /^SwapTotal:/    {stotal=$2}
-    /^SwapFree:/     {sfree=$2}
-    END {
-        c=cached+srec; used=total-free-buffers-c
-        if(used<0)used=0
-        printf "MT=%d MU=%d MF=%d MA=%d MC=%d ST=%d SU=%d\n",
-               total,used,free,avail,c,stotal,stotal-sfree
-    }' /proc/meminfo)"
-
-sql "INSERT INTO memory(ts,total,used,free,available,cached,swap_total,swap_used)
-     VALUES($TS,$MT,$MU,$MF,$MA,$MC,$ST,$SU);"
-
-# =============================================================
-# DISCO
-# =============================================================
-
-while IFS= read -r line; do
-    read -r device total_kb used_kb avail_kb mount <<< "$line"
-    free_kb=$(( total_kb - used_kb ))
-
-    inode_line=$(df -Pi "$mount" 2>/dev/null | tail -1)
-    read -r _ itotal iused _ _ _ <<< "$inode_line"
-    itotal=${itotal:-0}; iused=${iused:-0}
-
-    mount_esc="${mount//\'/\'\'}"
-    device_esc="${device//\'/\'\'}"
-
-    sql "INSERT INTO disk(ts,mount,device,total,used,free,inodes_total,inodes_used)
-         VALUES($TS,'$mount_esc','$device_esc',$total_kb,$used_kb,$free_kb,$itotal,$iused);"
-
-done < <(df -Pk 2>/dev/null | tail -n +2 | awk '
-    {device=$1; total=$2; used=$3; avail=$4; mount=$NF}
-    device ~ /^(tmpfs|devtmpfs|udev|none|overlay|shm)/ {next}
-    mount  ~ /^\/(sys|proc|dev|run\/user)/              {next}
-    {print device, total, used, avail, mount}
-')
-
-# =============================================================
-# RED
-# =============================================================
-
-awk 'NR>2{
-    gsub(/:/," ")
-    iface=$1; if(iface==""||iface=="lo")next
-    printf "%s %s %s %s %s %s %s %s %s\n",
-        iface,$2,$10,$3,$11,$4,$12,$5,$13
-}' /proc/net/dev | while read -r iface rx_b tx_b rx_p tx_p rx_e tx_e rx_d tx_d; do
-    iface_esc="${iface//\'/\'\'}"
-    sql "INSERT INTO network(ts,iface,rx_bytes,tx_bytes,rx_packets,tx_packets,rx_errors,tx_errors,rx_dropped,tx_dropped)
-         VALUES($TS,'$iface_esc',$rx_b,$tx_b,$rx_p,$tx_p,$rx_e,$tx_e,$rx_d,$tx_d);"
-done
-
-# =============================================================
-# PROCESOS
-# =============================================================
-
-eval "$(awk '
-    /^State:/ {
-        s=substr($2,1,1)
-        if(s=="R")r++
-        else if(s=="S"||s=="D")sl++
-        else if(s=="T")st++
-        else if(s=="Z")z++
-        total++
-    }
-    /^Threads:/ {threads+=$2}
-    END {
-        printf "PROC_TOTAL=%d PROC_RUN=%d PROC_SLEEP=%d PROC_STOP=%d PROC_ZOM=%d PROC_THR=%d\n",
-               total,r+0,sl+0,st+0,z+0,threads
-    }
-' /proc/[0-9]*/status 2>/dev/null)"
-
-# Top CPU: usa ps (más fiable que parsear /proc manualmente para %)
-cpu_top=$(ps -eo pid,pcpu --no-headers --sort=-pcpu 2>/dev/null | awk 'NR==1{print $1,$2}')
-cpu_top_pid=$(awk '{print $1}' <<< "$cpu_top")
-cpu_top_pct=$(awk '{print $2}' <<< "$cpu_top")
-cpu_top_pid=${cpu_top_pid:-NULL}; cpu_top_pct=${cpu_top_pct:-NULL}
-
-# Top MEM
-mem_top=$(ps -eo pid,pmem --no-headers --sort=-pmem 2>/dev/null | awk 'NR==1{print $1,$2}')
-mem_top_pid=$(awk '{print $1}' <<< "$mem_top")
-mem_top_pct=$(awk '{print $2}' <<< "$mem_top")
-mem_top_pid=${mem_top_pid:-NULL}; mem_top_pct=${mem_top_pct:-NULL}
-
-sql "INSERT INTO processes(ts,total,running,sleeping,stopped,zombie,threads,cpu_top_pid,cpu_top_pct,mem_top_pid,mem_top_pct)
-     VALUES($TS,$PROC_TOTAL,$PROC_RUN,$PROC_SLEEP,$PROC_STOP,$PROC_ZOM,$PROC_THR,$cpu_top_pid,$cpu_top_pct,$mem_top_pid,$mem_top_pct);"
-
-# =============================================================
-# SISTEMA GENERAL
-# =============================================================
-
-uptime_sec=$(awk '{printf "%d",$1}' /proc/uptime)
-users_logged=$(who 2>/dev/null | wc -l)
-read -r _l1 _ _ procs_str _ < /proc/loadavg
-procs_total=$(echo "$procs_str" | cut -d/ -f2)
-
-sql "INSERT INTO system_info(ts,uptime_sec,load_1m,users_logged,procs_total)
-     VALUES($TS,$uptime_sec,$load1,$users_logged,$procs_total);"
-
-# =============================================================
-# Retención (7 días, ~1/2880 ejecuciones)
-# =============================================================
-
-if (( RANDOM % 2880 == 0 )); then
-    RETAIN=$(( TS - 7*86400 ))
-    sql "DELETE FROM cpu         WHERE ts < $RETAIN;
-         DELETE FROM memory      WHERE ts < $RETAIN;
-         DELETE FROM disk        WHERE ts < $RETAIN;
-         DELETE FROM network     WHERE ts < $RETAIN;
-         DELETE FROM processes   WHERE ts < $RETAIN;
-         DELETE FROM system_info WHERE ts < $RETAIN;
-         VACUUM;"
-fi
