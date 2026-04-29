@@ -1,1 +1,3 @@
-metrics.db
+*.db
+*.db-wal
+*.db-shm
