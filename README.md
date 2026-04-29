@@ -131,9 +131,9 @@ curl "http://localhost:41062/www/api/cpu.php?range=1h&agg=avg&fields=load_percen
 ---
 
 ### `GET /disk.php`
-Histórico de capacidad e inodos por partición.
-* **Campos:** `mount`, `device`, `total`, `used`, `free`, `used_percent`, `free_percent`, `inodes_total`...
-* **Params Extra:** `mount` (ej. `/`), `unit` (`kb`, `mb`, `gb` - defecto: `gb`).
+Histórico de capacidad, inodos y operaciones de lectura/escritura (I/O) por partición.
+* **Campos:** `mount`, `device`, `total`, `used`, `free`, `used_percent`, `free_percent`, `inodes_total`, `read_bytes`, `write_bytes`, `read_ops`, `write_ops`...
+* **Params Extra:** `mount` (ej. `/`), `unit` (`bytes`, `kb`, `mb`, `gb` - defecto: `gb`).
 
 **Ejemplo de Petición:**
 ```bash
@@ -181,8 +181,8 @@ Histórico de RAM y Swap.
 ---
 
 ### `GET /network.php`
-Histórico de tráfico de red. Note que `rx_bytes` y `tx_bytes` son acumulativos desde el arranque.
-* **Campos:** `iface`, `rx_bytes`, `tx_bytes`, `rx_packets`, `tx_packets`, `rx_errors`, `rx_dropped`...
+Histórico de tráfico de red. Los contadores (`rx_bytes`, `tx_bytes`, etc.) representan el tráfico real generado *durante* el intervalo de recolección (deltas), no el acumulado global.
+* **Campos:** `iface`, `rx_bytes`, `tx_bytes`, `rx_packets`, `tx_packets`, `rx_errors`, `tx_errors`, `rx_dropped`, `tx_dropped`
 * **Params Extra:** `interface` (ej. `eth0`), `unit` (`bytes`, `kb`, `mb`, `gb` - defecto: `mb`).
 
 ---

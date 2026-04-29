@@ -35,14 +35,18 @@ CREATE INDEX IF NOT EXISTS idx_memory_ts ON memory(ts);
 
 -- ── Disco ────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS disk (
-    ts           INTEGER NOT NULL,
-    mount        TEXT    NOT NULL,
-    device       TEXT,
-    total        INTEGER,
-    used         INTEGER,
-    free         INTEGER,
-    inodes_total INTEGER,
-    inodes_used  INTEGER
+	ts           INTEGER NOT NULL,
+	mount        TEXT    NOT NULL,
+	device       TEXT,
+	total        INTEGER,
+	used         INTEGER,
+	free         INTEGER,
+	inodes_total INTEGER,
+	inodes_used  INTEGER,
+	read_bytes   INTEGER DEFAULT 0,
+	write_bytes  INTEGER DEFAULT 0,
+	read_ops     INTEGER DEFAULT 0,
+	write_ops    INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_disk_ts    ON disk(ts);
 CREATE INDEX IF NOT EXISTS idx_disk_mount ON disk(mount);

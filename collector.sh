@@ -26,6 +26,12 @@ fi
 
 sql() { sqlite3 "$DB" "$1"; }
 
+# Arrays asociativos para para RED
+declare -A net_last_rx_b net_last_tx_b net_last_rx_p net_last_tx_p net_last_rx_e net_last_tx_e net_last_rx_d net_last_tx_d
+
+# Arrays asociativos para para DISCO
+declare -A disk_last_r_sect disk_last_w_sect disk_last_r_io disk_last_w_io
+
 # Bucle infinito: se ejecuta cada 10 segundos
 while true; do
     # Guardamos el tiempo de inicio para calcular el drift
@@ -93,44 +99,113 @@ while true; do
         VALUES($TS,$MT,$MU,$MF,$MA,$MC,$ST,$SU);"
 
     # =============================================================
-    # DISCO
+	# DISCO
+	# =============================================================
+
+	while IFS= read -r line
+	do
+		read -r device total_kb used_kb avail_kb mount <<< "$line"
+		free_kb=$(( total_kb - used_kb ))
+
+		inode_line=$(df -Pi "$mount" 2>/dev/null | tail -1)
+		read -r _ itotal iused _ _ _ <<< "$inode_line"
+		itotal=${itotal:-0}; iused=${iused:-0}
+
+		mount_esc="${mount//\'/\'\'}"
+		device_esc="${device//\'/\'\'}"
+
+		# Extraer el nombre base (ej: /dev/sda1 -> sda1) para buscarlo en diskstats
+		dev_base="${device##*/}"
+		
+		# Leer de diskstats: lecturas completadas (4), sectores leídos (6), escrituras completadas (8), sectores escritos (10)
+		stats=$(awk -v dev="$dev_base" '$3 == dev {print $4, $6, $8, $10}' /proc/diskstats 2>/dev/null)
+
+		d_r_bytes=0; d_w_bytes=0; d_r_io=0; d_w_io=0
+
+		if [[ -n "$stats" ]]
+		then
+			read -r rio rsect wio wsect <<< "$stats"
+
+			if [[ -n "${disk_last_r_sect[$dev_base]:-}" ]]
+			then
+				d_r_sect=$(( rsect - disk_last_r_sect[$dev_base] ))
+				d_w_sect=$(( wsect - disk_last_w_sect[$dev_base] ))
+				d_r_io=$(( rio - disk_last_r_io[$dev_base] ))
+				d_w_io=$(( wio - disk_last_w_io[$dev_base] ))
+
+				# Prevenir negativos
+				if (( d_r_sect < 0 )); then d_r_sect=0; fi
+				if (( d_w_sect < 0 )); then d_w_sect=0; fi
+				if (( d_r_io < 0 )); then d_r_io=0; fi
+				if (( d_w_io < 0 )); then d_w_io=0; fi
+
+				# Convertir sectores a bytes (en /proc/diskstats el sector siempre son 512 bytes)
+				d_r_bytes=$(( d_r_sect * 512 ))
+				d_w_bytes=$(( d_w_sect * 512 ))
+			fi
+
+			disk_last_r_sect[$dev_base]=$rsect
+			disk_last_w_sect[$dev_base]=$wsect
+			disk_last_r_io[$dev_base]=$rio
+			disk_last_w_io[$dev_base]=$wio
+		fi
+
+		sql "INSERT INTO disk(ts,mount,device,total,used,free,inodes_total,inodes_used,read_bytes,write_bytes,read_ops,write_ops)
+			VALUES($TS,'$mount_esc','$device_esc',$total_kb,$used_kb,$free_kb,$itotal,$iused,$d_r_bytes,$d_w_bytes,$d_r_io,$d_w_io);"
+
+	done < <(df -Pk 2>/dev/null | tail -n +2 | awk '
+		{device=$1; total=$2; used=$3; avail=$4; mount=$NF}
+		device ~ /^(tmpfs|devtmpfs|udev|none|overlay|shm)/ {next}
+		mount  ~ /^\/(sys|proc|dev|run\/user)/              {next}
+		{print device, total, used, avail, mount}
+	')
+
     # =============================================================
+	# RED
+	# =============================================================
 
-    while IFS= read -r line; do
-        read -r device total_kb used_kb avail_kb mount <<< "$line"
-        free_kb=$(( total_kb - used_kb ))
+	while read -r iface rx_b tx_b rx_p tx_p rx_e tx_e rx_d tx_d
+	do
+		iface_esc="${iface//\'/\'\'}"
 
-        inode_line=$(df -Pi "$mount" 2>/dev/null | tail -1)
-        read -r _ itotal iused _ _ _ <<< "$inode_line"
-        itotal=${itotal:-0}; iused=${iused:-0}
+		# Si ya existe una lectura anterior para esta interfaz, calculamos la diferencia
+		if [[ -n "${net_last_rx_b[$iface]:-}" ]]
+		then
+			d_rx_b=$(( rx_b - net_last_rx_b[$iface] ))
+			d_tx_b=$(( tx_b - net_last_tx_b[$iface] ))
+			d_rx_p=$(( rx_p - net_last_rx_p[$iface] ))
+			d_tx_p=$(( tx_p - net_last_tx_p[$iface] ))
+			d_rx_e=$(( rx_e - net_last_rx_e[$iface] ))
+			d_tx_e=$(( tx_e - net_last_tx_e[$iface] ))
+			d_rx_d=$(( rx_d - net_last_rx_d[$iface] ))
+			d_tx_d=$(( tx_d - net_last_tx_d[$iface] ))
 
-        mount_esc="${mount//\'/\'\'}"
-        device_esc="${device//\'/\'\'}"
+			# Prevenir valores negativos si la interfaz se reinicia o los contadores dan la vuelta
+			if (( d_rx_b < 0 )); then d_rx_b=0; fi
+			if (( d_tx_b < 0 )); then d_tx_b=0; fi
+			if (( d_rx_p < 0 )); then d_rx_p=0; fi
+			if (( d_tx_p < 0 )); then d_tx_p=0; fi
 
-        sql "INSERT INTO disk(ts,mount,device,total,used,free,inodes_total,inodes_used)
-            VALUES($TS,'$mount_esc','$device_esc',$total_kb,$used_kb,$free_kb,$itotal,$iused);"
+			sql "INSERT INTO network(ts,iface,rx_bytes,tx_bytes,rx_packets,tx_packets,rx_errors,tx_errors,rx_dropped,tx_dropped)
+				VALUES($TS,'$iface_esc',$d_rx_b,$d_tx_b,$d_rx_p,$d_tx_p,$d_rx_e,$d_tx_e,$d_rx_d,$d_tx_d);"
+		fi
 
-    done < <(df -Pk 2>/dev/null | tail -n +2 | awk '
-        {device=$1; total=$2; used=$3; avail=$4; mount=$NF}
-        device ~ /^(tmpfs|devtmpfs|udev|none|overlay|shm)/ {next}
-        mount  ~ /^\/(sys|proc|dev|run\/user)/              {next}
-        {print device, total, used, avail, mount}
-    ')
+		# Guardar la lectura actual para el próximo ciclo
+		net_last_rx_b[$iface]=$rx_b
+		net_last_tx_b[$iface]=$tx_b
+		net_last_rx_p[$iface]=$rx_p
+		net_last_tx_p[$iface]=$tx_p
+		net_last_rx_e[$iface]=$rx_e
+		net_last_tx_e[$iface]=$tx_e
+		net_last_rx_d[$iface]=$rx_d
+		net_last_tx_d[$iface]=$tx_d
 
-    # =============================================================
-    # RED
-    # =============================================================
-
-    awk 'NR>2{
-        gsub(/:/," ")
-        iface=$1; if(iface==""||iface=="lo")next
-        printf "%s %s %s %s %s %s %s %s %s\n",
-            iface,$2,$10,$3,$11,$4,$12,$5,$13
-    }' /proc/net/dev | while read -r iface rx_b tx_b rx_p tx_p rx_e tx_e rx_d tx_d; do
-        iface_esc="${iface//\'/\'\'}"
-        sql "INSERT INTO network(ts,iface,rx_bytes,tx_bytes,rx_packets,tx_packets,rx_errors,tx_errors,rx_dropped,tx_dropped)
-            VALUES($TS,'$iface_esc',$rx_b,$tx_b,$rx_p,$tx_p,$rx_e,$tx_e,$rx_d,$tx_d);"
-    done
+	done < <(awk 'NR>2{
+		gsub(/:/," ")
+		iface=$1; if(iface==""||iface=="lo")next
+		printf "%s %s %s %s %s %s %s %s %s\n",
+			iface,$2,$10,$3,$11,$4,$12,$5,$13
+	}' /proc/net/dev)
 
     # =============================================================
     # PROCESOS
