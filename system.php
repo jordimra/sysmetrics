@@ -19,11 +19,12 @@ $db = get_db();
 $sql_fields = array_diff($p['fields_raw'] ?? $FIELDS, ['uptime_human']);
 $want_human = ($p['fields_raw'] === null) || in_array('uptime_human', $p['fields_raw'] ?? []);
 $cols       = implode(', ', $sql_fields ?: ['uptime_sec','load_1m','users_logged','procs_total']);
+$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, $cols FROM system_info
             WHERE ts BETWEEN :from AND :to
-            ORDER BY ts ASC LIMIT " . RAW_LIMIT;
+            ORDER BY ts ASC $limit_clause";
 } else {
     $fn     = strtoupper($p['agg']);
     $bucket = time_bucket_expr($p['interval_sec']);
@@ -34,7 +35,7 @@ if ($p['agg'] === 'raw') {
     $sql = "SELECT $bucket AS ts, " . implode(', ', $parts) . "
             FROM system_info
             WHERE ts BETWEEN :from AND :to
-            GROUP BY $bucket ORDER BY ts ASC";
+            GROUP BY $bucket ORDER BY ts ASC $limit_clause";
 }
 
 $stmt = $db->prepare($sql);

@@ -13,17 +13,18 @@ $p = parse_common_params($FIELDS);
 $db = get_db();
 
 $cols = implode(', ', $p['fields_raw'] ?? $FIELDS);
+$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, $cols FROM cpu
             WHERE ts BETWEEN :from AND :to
-            ORDER BY ts ASC LIMIT " . RAW_LIMIT;
+            ORDER BY ts ASC $limit_clause";
 } else {
     $bucket = time_bucket_expr($p['interval_sec']);
     $sel    = agg_select($p['agg'], $p['fields_raw'] ?? $FIELDS);
     $sql = "SELECT $bucket AS ts, $sel FROM cpu
             WHERE ts BETWEEN :from AND :to
-            GROUP BY $bucket ORDER BY ts ASC";
+            GROUP BY $bucket ORDER BY ts ASC $limit_clause";
 }
 
 $stmt = $db->prepare($sql);
