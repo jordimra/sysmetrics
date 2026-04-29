@@ -51,8 +51,8 @@ El recolector se ejecuta en un bucle infinito adaptativo para recolectar datos c
 
 Ejecuta `crontab -e` y añade esta única tarea:
 ```text
-# Vigila el recolector cada minuto. Si no está corriendo (pgrep), lo levanta inyectando el entorno.
-* * * * * set -a; . /etc/environment; pgrep -f collector.sh > /dev/null || "$SYSMETRICS/collector.sh" >> /var/log/collector.log 2>&1
+# Recolector iniciado en el boot.
+@reboot set -a; . /etc/environment; "$SYSMETRICS/collector.sh"
 ```
 
 ---
