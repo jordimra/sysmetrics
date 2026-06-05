@@ -18,7 +18,6 @@ $FIELDS = [
 	'read_bytes','write_bytes','read_ops','write_ops'
 ];
 $p = parse_common_params($FIELDS);
-
 $unit = strtolower(trim($_GET['unit'] ?? 'gb'));
 if (!in_array($unit, ['bytes','kb','mb','gb'])) error_json(400, "Unidad inválida: '$unit'.", ['available_units' => ['bytes','kb','mb','gb']]);
 
@@ -26,6 +25,7 @@ $div_kb = match($unit) { 'bytes' => 0, 'kb' => 1, 'mb' => 1024, 'gb' => 1048576 
 $div_b  = match($unit) { 'bytes' => 1, 'kb' => 1024, 'mb' => 1048576, 'gb' => 1073741824 };
 
 $filter_mount = $_GET['mount'] ?? null;
+$is_table = ($_GET['mode'] ?? '') === 'table';
 
 $db = get_db();
 $BASE_NUM = ['total','used','free','inodes_total','inodes_used','read_bytes','write_bytes','read_ops','write_ops'];
@@ -54,6 +54,30 @@ $params = [':from' => $p['from_ts'], ':to' => $p['to_ts']];
 if ($filter_mount !== null) $params[':mount'] = $filter_mount;
 $stmt->execute($params);
 $rows = $stmt->fetchAll();
+
+$kb   = fn(int $v): float|int => $div_kb === 0 ? $v * 1024 : ($div_kb === 1 ? $v : round($v / $div_kb, 3));
+$b    = fn(int $v): float|int => $div_b === 1 ? $v : round($v / $div_b, 4);
+$pct  = fn(int $n, int $d): float => $d > 0 ? round($n / $d * 100, 2) : 0.0;
+
+if ($is_table) {
+    $data = array_map(function($r) use ($kb, $b, $pct) {
+        $t = (int)$r['total']; $iu = (int)$r['inodes_used']; $it = (int)$r['inodes_total'];
+        $times = ts_format((int)$r['ts']);
+        return [
+            'ts' => $times['ts'],
+            'mount' => $r['mount'],
+            'device' => $r['device'],
+            'total' => $kb($t),
+            'used' => $kb((int)$r['used']),
+            'used_percent' => $pct((int)$r['used'], $t),
+            'read_bytes' => $b((int)$r['read_bytes']),
+            'write_bytes' => $b((int)$r['write_bytes'])
+        ];
+    }, array_reverse($rows));
+    
+    output(['status' => 'ok', 'data' => $data]);
+    exit;
+}
 
 if ($filter_mount !== null && empty($rows)) error_json(404, "No hay datos para mount '$filter_mount' en el rango solicitado.");
 
