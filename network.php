@@ -27,19 +27,18 @@ $BASE_NUM = ['rx_bytes','tx_bytes','rx_packets','tx_packets','rx_errors','tx_err
 
 $where = "ts BETWEEN :from AND :to";
 if ($filter_iface !== null) $where .= " AND iface = :iface";
-$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
+$order_limit = sql_order_limit($p['limit'], 'mount ASC');
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, iface, " . implode(',', $BASE_NUM) . "
-            FROM network WHERE $where
-            ORDER BY ts ASC, iface ASC $limit_clause";
+            FROM network WHERE $where $order_limit";
 } else {
     $fn     = strtoupper($p['agg']);
     $bucket = time_bucket_expr($p['interval_sec']);
     $sel    = implode(', ', array_map(fn($c) => "ROUND($fn($c),0) AS $c", $BASE_NUM));
     $sql = "SELECT $bucket AS ts, iface, $sel
             FROM network WHERE $where
-            GROUP BY $bucket, iface ORDER BY ts ASC, iface ASC $limit_clause";
+            GROUP BY $bucket, iface $order_limit";
 }
 
 $stmt = $db->prepare($sql);
@@ -81,7 +80,7 @@ foreach ($rows as $r)
 $interfaces = array_map(fn($iface, $series) => [
     'iface'  => $iface,
     'count'  => count($series),
-    'series' => $series,
+    'series' => array_reverse($series),
 ], array_keys($by_iface), $by_iface);
 
 output([

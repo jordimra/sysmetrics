@@ -5,7 +5,7 @@
 --   sqlite3 /media/novedades/www/api/metrics.db < init_db.sql
 -- ============================================================
 
-PRAGMA journal_mode = WAL;
+PRAGMA journal_mode = TRUNCATE;
 PRAGMA synchronous  = NORMAL;
 
 -- ── CPU ──────────────────────────────────────────────────────

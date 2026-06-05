@@ -21,23 +21,25 @@ $divisor = match($unit) { 'mb' => 1024, 'gb' => 1048576, default => 1 };
 
 $db = get_db();
 $BASE = ['total','used','free','available','cached','swap_total','swap_used'];
-$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
+$order_limit = sql_order_limit($p['limit']);
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, " . implode(',', $BASE) . " FROM memory
-            WHERE ts BETWEEN :from AND :to
-            ORDER BY ts ASC $limit_clause";
+            WHERE ts BETWEEN :from AND :to $limit_clause";
 } else {
     $fn     = strtoupper($p['agg']);
     $bucket = time_bucket_expr($p['interval_sec']);
     $sel    = implode(', ', array_map(fn($c) => "ROUND($fn($c),0) AS $c", $BASE));
     $sql = "SELECT $bucket AS ts, $sel FROM memory
             WHERE ts BETWEEN :from AND :to
-            GROUP BY $bucket ORDER BY ts ASC $limit_clause";
+            GROUP BY $bucket $limit_clause";
 }
 
 $stmt = $db->prepare($sql);
 $stmt->execute([':from' => $p['from_ts'], ':to' => $p['to_ts']]);
+
+// array_reverse restaura el orden cronológico para el frontend ---
+$raw_rows = array_reverse($stmt->fetchAll());
 
 $want = $p['fields_raw'] ? array_flip($p['fields_raw']) : null;
 $kb   = fn(int $v): float|int => $divisor === 1 ? $v : round($v / $divisor, 3);
@@ -63,7 +65,7 @@ $rows = array_map(function (array $r) use ($want, $kb, $pct)
         'used_percent'       => $add('used_percent',       $pct((int)$r['used'],      $t)),
         'swap_used_percent'  => $add('swap_used_percent',  $pct((int)$r['swap_used'], $st)),
     ], fn($v) => $v !== null);
-}, $stmt->fetchAll());
+}, $raw_rows);
 
 output([
     'status'       => 'ok',

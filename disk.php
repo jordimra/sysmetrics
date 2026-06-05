@@ -32,13 +32,12 @@ $BASE_NUM = ['total','used','free','inodes_total','inodes_used','read_bytes','wr
 
 $where = "ts BETWEEN :from AND :to";
 if ($filter_mount !== null) $where .= " AND mount = :mount";
-$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
+$order_limit = sql_order_limit($p['limit'], 'mount ASC');
 
 if ($p['agg'] === 'raw')
 {
 	$sql = "SELECT ts, mount, device, " . implode(',', $BASE_NUM) . "
-	        FROM disk WHERE $where
-	        ORDER BY ts ASC, mount ASC $limit_clause";
+	        FROM disk WHERE $where $order_limit";
 }
 else
 {
@@ -47,7 +46,7 @@ else
 	$sel    = implode(', ', array_map(fn($c) => "ROUND($fn($c),0) AS $c", $BASE_NUM));
 	$sql = "SELECT $bucket AS ts, mount, MAX(device) AS device, $sel
 	        FROM disk WHERE $where
-	        GROUP BY $bucket, mount ORDER BY ts ASC, mount ASC";
+	        GROUP BY $bucket, mount $order_limit";
 }
 
 $stmt = $db->prepare($sql);
@@ -99,7 +98,7 @@ foreach ($rows as $r)
 $partitions = array_map(fn($mnt, $series) => [
 	'mount'  => $mnt,
 	'count'  => count($series),
-	'series' => $series,
+	'series' => arrayu_reverse($series),
 ], array_keys($by_mount), $by_mount);
 
 output([
