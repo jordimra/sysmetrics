@@ -19,7 +19,6 @@ api/
 ├── processes.php  → Endpoint en TIEMPO REAL (equivalente a `top`).
 ├── sockets.php    → Histórico de conexiones y estados de red TCP.
 └── system.php     → Histórico global (uptime, load, usuarios, procesos totales).
-
 ```
 
 ---
@@ -41,7 +40,6 @@ Aunque el servicio tiene sus propias variables, es recomendable que las variable
 
 ```bash
 sudo nano /etc/environment
-
 ```
 
 Añade las rutas y el intervalo al final del archivo:
@@ -50,7 +48,6 @@ Añade las rutas y el intervalo al final del archivo:
 SYSMETRICS="/opt/sysmetrics"
 SYSMETRICS_DB="/opt/sysmetrics/metrics.db"
 SYSMETRICS_INTERVAL="10"
-
 ```
 
 ### Paso 2: Configurar el Recolector como Servicio (systemd)
@@ -90,7 +87,6 @@ SyslogIdentifier=collector-metricas
 
 [Install]
 WantedBy=multi-user.target
-
 ```
 
 #### 2. Activar e iniciar el servicio
@@ -104,7 +100,6 @@ sudo systemctl enable metrics-collector.service
 
 # 3. Iniciar el servicio ahora
 sudo systemctl start metrics-collector.service
-
 ```
 
 #### 3. Verificación y monitoreo
@@ -115,7 +110,6 @@ sudo systemctl status metrics-collector.service
 
 # Seguir los logs en tiempo real
 sudo journalctl -u metrics-collector.service -f
-
 ```
 
 ---
@@ -148,7 +142,6 @@ Histórico de CPU, temperatura y desglose de estados (iowait).
 
 ```bash
 curl "http://localhost:41062/www/api/cpu.php?range=1h&agg=avg&fields=load_percent,iowait_percent"
-
 ```
 
 ---
@@ -224,7 +217,6 @@ Instantánea del estado de los procesos (estilo `top`). Lee directamente de `/pr
 
 ```bash
 curl "http://localhost:41062/www/api/processes.php?sort=mem&limit=2"
-
 ```
 
 **Respuesta:**
@@ -289,7 +281,3 @@ Si se solicita un campo inválido, un rango ilógico o falta la BD, el API retor
 | `400 Bad Request`         | Parámetro erróneo (rango, agregación, campos, unidad). |
 | `404 Not Found`           | Recurso no hallado en histórico (ej. mount inventado). |
 | `503 Service Unavailable` | Base de datos SQLite no encontrada.                    |
-
-```
-
-```
