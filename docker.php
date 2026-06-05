@@ -18,7 +18,7 @@ $div_b = match($unit) { 'bytes' => 1, 'kb' => 1024, 'mb' => 1048576, 'gb' => 107
 $filter_container = $_GET['container'] ?? null;
 $where = "ts BETWEEN :from AND :to";
 if ($filter_container !== null) $where .= " AND container_name = :container";
-$order_limit = sql_order_limit($p['limit'], 'mount ASC');
+$order_limit = sql_order_limit($p['limit']);
 
 $want = $p['fields_raw'] ? array_flip($p['fields_raw']) : null;
 $b    = fn(int $v): float|int => $unit === 'bytes' ? $v : round($v / $div_b, 4);
@@ -48,6 +48,24 @@ $stmt->execute($params);
 $rows = $stmt->fetchAll();
 
 if ($filter_container !== null && empty($rows)) error_json(404, "No hay datos para el contenedor '$filter_container'.");
+
+$is_table = ($_GET['mode'] ?? '') === 'table';
+
+if ($is_table) {
+    // Retornamos un array plano simple
+    $data = array_map(function($r) use ($add, $b) {
+        $times = ts_format((int)$r['ts']);
+        return [
+            'ts'             => $times['ts'],
+            'container_name' => $r['container_name'],
+            'cpu_percent'    => (float)$r['cpu_percent'],
+            'mem_bytes'      => $b((int)$r['mem_bytes'])
+        ];
+    }, $rows);
+    
+    output(['status' => 'ok', 'data' => $data]);
+    exit;
+}
 
 $by_container = array_reduce($rows, function (array $carry, array $r) use ($add, $b)
 {
