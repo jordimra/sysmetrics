@@ -166,8 +166,8 @@ Histórico de capacidad, inodos y operaciones de lectura/escritura (I/O) por par
 
 Histórico de consumo de recursos por contenedor Docker individual.
 
-- **Campos:** `container_name`, `cpu_percent`, `mem_usage_str`.
-- **Params Extra:** `container` (Filtra por nombre específico de contenedor).
+- **Campos:** `container_name`, `cpu_percent`, `mem_bytes`.
+- **Params Extra:** `container` (Filtra por nombre específico de contenedor), `unit` (`bytes`, `kb`, `mb`, `gb` - defecto: `mb`).
 
 ---
 

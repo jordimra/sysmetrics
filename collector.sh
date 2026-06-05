@@ -235,8 +235,10 @@ do
 
 	if command -v docker >/dev/null 2>&1
 	then
-		docker stats --no-stream --format "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}" | while IFS='|' read -r d_name d_cpu d_mem
+		docker stats --no-stream --format "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}" 2>/dev/null | while IFS='|' read -r d_name d_cpu d_mem
 		do
+			if [[ -z "$d_name" ]]; then continue; fi
+			
 			c_cpu="${d_cpu%%%*}"
 			c_cpu="${c_cpu//,/.}"
 			if [[ "$c_cpu" == "--" || -z "$c_cpu" ]]; then c_cpu="0"; fi
@@ -244,9 +246,19 @@ do
 			c_mem_raw="${d_mem%% /*}"
 			c_name_esc="${d_name//\'/\'\'}"
 			
-			sql "INSERT INTO docker_stats(ts, container_name, cpu_percent, mem_usage_str)
-				VALUES($TS, '$c_name_esc', $c_cpu, '$c_mem_raw');"
-		done
+			# Convertir unidad humana a bytes usando awk
+			c_mem_bytes=$(awk -v mem="$c_mem_raw" 'BEGIN {
+				val = mem + 0;
+				if (mem ~ /GiB|GB/) val *= 1073741824;
+				else if (mem ~ /MiB|MB/) val *= 1048576;
+				else if (mem ~ /KiB|KB/) val *= 1024;
+				printf "%.0f", val
+			}')
+			
+			sql "INSERT INTO docker_stats(ts, container_name, cpu_percent, mem_bytes)
+				VALUES($TS, '$c_name_esc', $c_cpu, $c_mem_bytes);"
+				
+		done || echo "DEBUG: Error interno o fin de lectura en el pipe de Docker." >&2
 	fi
 
 	# =============================================================
