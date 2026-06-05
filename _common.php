@@ -188,3 +188,12 @@ function output(array $payload): never {
     exit;
 }
 
+/**
+ * Convierte un parámetro GET separado por comas en un array seguro.
+ * Uso: get_filter_array('interface') -> ['eth0', 'eth1']
+ */
+function get_filter_array(string $param): ?array {
+    if (empty($_GET[$param])) return null;
+    $items = explode(',', $_GET[$param]);
+    return array_map('trim', $items);
+}
