@@ -21,6 +21,7 @@ if (!in_array($unit, ['bytes','kb','mb','gb'])) {
 }
 $divisor      = match($unit) { 'kb' => 1024, 'mb' => 1048576, 'gb' => 1073741824, default => 1 };
 $filter_iface = $_GET['interface'] ?? null;
+$is_table     = ($_GET['mode'] ?? '') === 'table';
 
 $db = get_db();
 $BASE_NUM = ['rx_bytes','tx_bytes','rx_packets','tx_packets','rx_errors','tx_errors','rx_dropped','tx_dropped'];
@@ -46,6 +47,25 @@ $params = [':from' => $p['from_ts'], ':to' => $p['to_ts']];
 if ($filter_iface !== null) $params[':iface'] = $filter_iface;
 $stmt->execute($params);
 $rows = $stmt->fetchAll();
+
+$b = fn(int $v): float|int => $unit === 'bytes' ? $v : round($v / $divisor, 4);
+
+if ($is_table) {
+    $data = array_map(function($r) use ($b) {
+        $times = ts_format((int)$r['ts']);
+        return [
+            'ts'         => $times['ts'],
+            'iface'      => $r['iface'],
+            'rx_bytes'   => $b((int)$r['rx_bytes']),
+            'tx_bytes'   => $b((int)$r['tx_bytes']),
+            'rx_packets' => (int)$r['rx_packets'],
+            'tx_packets' => (int)$r['tx_packets']
+        ];
+    }, array_reverse($rows));
+    
+    output(['status' => 'ok', 'data' => $data]);
+    exit;
+}
 
 if ($filter_iface !== null && empty($rows)) {
     error_json(404, "No hay datos para la interfaz '$filter_iface' en el rango solicitado.");
