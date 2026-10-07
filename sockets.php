@@ -11,7 +11,7 @@ $p = parse_common_params($FIELDS);
 $db = get_db();
 
 $cols = implode(', ', $p['fields_raw'] ?? $FIELDS);
-$order_limit = sql_order_limit($p['limit'], 'mount ASC');
+$order_limit = sql_order_limit($p['limit']);
 
 if ($p['agg'] === 'raw')
 {

@@ -27,7 +27,7 @@ $BASE_NUM = ['rx_bytes','tx_bytes','rx_packets','tx_packets','rx_errors','tx_err
 
 $where = "ts BETWEEN :from AND :to";
 if ($filter_iface !== null) $where .= " AND iface = :iface";
-$order_limit = sql_order_limit($p['limit'], 'mount ASC');
+$order_limit = sql_order_limit($p['limit'], 'iface ASC');
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, iface, " . implode(',', $BASE_NUM) . "

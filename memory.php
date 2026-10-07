@@ -25,14 +25,14 @@ $order_limit = sql_order_limit($p['limit']);
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, " . implode(',', $BASE) . " FROM memory
-            WHERE ts BETWEEN :from AND :to $limit_clause";
+            WHERE ts BETWEEN :from AND :to $order_limit";
 } else {
     $fn     = strtoupper($p['agg']);
     $bucket = time_bucket_expr($p['interval_sec']);
     $sel    = implode(', ', array_map(fn($c) => "ROUND($fn($c),0) AS $c", $BASE));
     $sql = "SELECT $bucket AS ts, $sel FROM memory
             WHERE ts BETWEEN :from AND :to
-            GROUP BY $bucket $limit_clause";
+            GROUP BY $bucket $order_limit";
 }
 
 $stmt = $db->prepare($sql);

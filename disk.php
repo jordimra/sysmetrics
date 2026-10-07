@@ -98,7 +98,7 @@ foreach ($rows as $r)
 $partitions = array_map(fn($mnt, $series) => [
 	'mount'  => $mnt,
 	'count'  => count($series),
-	'series' => arrayu_reverse($series),
+	'series' => array_reverse($series),
 ], array_keys($by_mount), $by_mount);
 
 output([
