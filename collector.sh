@@ -16,7 +16,6 @@ fi
 
 IV="${SYSMETRICS_INTERVAL:-10}"
 DB="${SYSMETRICS}/metrics.db";
-TS=$(date +%s)   # Unix epoch — PHP convierte a hora local
 
 if [[ ! -f "$DB" ]]; then
     echo "ERROR: BD no encontrada: $DB" >&2
@@ -24,18 +23,26 @@ if [[ ! -f "$DB" ]]; then
     exit 1
 fi
 
-sql() { sqlite3 "$DB" "$1"; }
-
+#sql() { sqlite3 "$DB" "$1"; }
+sql() { 
+#    echo "DEBUG: Ejecutando en $DB -> INSERT: $1" >&2
+    sqlite3 "$DB" "$1"
+    if [[ $? -ne 0 ]]; then
+        echo "DEBUG: ERROR CRÍTICO AL ESCRIBIR EN BD" >&2
+    fi
+}
 # Arrays asociativos para para RED
 declare -A net_last_rx_b net_last_tx_b net_last_rx_p net_last_tx_p net_last_rx_e net_last_tx_e net_last_rx_d net_last_tx_d
 
 # Arrays asociativos para para DISCO
 declare -A disk_last_r_sect disk_last_w_sect disk_last_r_io disk_last_w_io
 
-# Bucle infinito: se ejecuta cada 10 segundos
+# Bucle infinito: se ejecuta cada IV segundos
 while true; do
+    echo "[$(date)] Ejecutando ciclo..." >&2
     # Guardamos el tiempo de inicio para calcular el drift
-    start_time=$(date +%s)
+    TS=$(date +%s) # Timestamp
+    start_time=$TS
         
     # =============================================================
     # CPU

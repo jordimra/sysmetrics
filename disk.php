@@ -32,12 +32,13 @@ $BASE_NUM = ['total','used','free','inodes_total','inodes_used','read_bytes','wr
 
 $where = "ts BETWEEN :from AND :to";
 if ($filter_mount !== null) $where .= " AND mount = :mount";
+$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
 
 if ($p['agg'] === 'raw')
 {
 	$sql = "SELECT ts, mount, device, " . implode(',', $BASE_NUM) . "
 	        FROM disk WHERE $where
-	        ORDER BY ts ASC, mount ASC LIMIT " . RAW_LIMIT;
+	        ORDER BY ts ASC, mount ASC $limit_clause";
 }
 else
 {

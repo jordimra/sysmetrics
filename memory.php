@@ -21,18 +21,19 @@ $divisor = match($unit) { 'mb' => 1024, 'gb' => 1048576, default => 1 };
 
 $db = get_db();
 $BASE = ['total','used','free','available','cached','swap_total','swap_used'];
+$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, " . implode(',', $BASE) . " FROM memory
             WHERE ts BETWEEN :from AND :to
-            ORDER BY ts ASC LIMIT " . RAW_LIMIT;
+            ORDER BY ts ASC $limit_clause";
 } else {
     $fn     = strtoupper($p['agg']);
     $bucket = time_bucket_expr($p['interval_sec']);
     $sel    = implode(', ', array_map(fn($c) => "ROUND($fn($c),0) AS $c", $BASE));
     $sql = "SELECT $bucket AS ts, $sel FROM memory
             WHERE ts BETWEEN :from AND :to
-            GROUP BY $bucket ORDER BY ts ASC";
+            GROUP BY $bucket ORDER BY ts ASC $limit_clause";
 }
 
 $stmt = $db->prepare($sql);

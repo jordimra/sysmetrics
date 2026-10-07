@@ -104,13 +104,17 @@ function parse_common_params(array $allowed_fields): array {
         $fields_raw = $requested;
     }
 
+    $limit = (int)($_GET['limit'] ?? 0);
+    if ($limit < 0) error_json(400, "El 'limit' debe ser un número positivo.");
+
     return [
         'range_sec'    => $range_sec,
         'agg'          => $agg,
         'interval_sec' => $interval_sec,
-        'from_ts'      => $from_ts,   // epoch — para WHERE en SQL y date() en output
+        'from_ts'      => $from_ts,
         'to_ts'        => $to_ts,
         'fields_raw'   => $fields_raw,
+        'limit'        => $limit,
     ];
 }
 

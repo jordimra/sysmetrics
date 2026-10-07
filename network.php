@@ -27,18 +27,19 @@ $BASE_NUM = ['rx_bytes','tx_bytes','rx_packets','tx_packets','rx_errors','tx_err
 
 $where = "ts BETWEEN :from AND :to";
 if ($filter_iface !== null) $where .= " AND iface = :iface";
+$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, iface, " . implode(',', $BASE_NUM) . "
             FROM network WHERE $where
-            ORDER BY ts ASC, iface ASC LIMIT " . RAW_LIMIT;
+            ORDER BY ts ASC, iface ASC $limit_clause";
 } else {
     $fn     = strtoupper($p['agg']);
     $bucket = time_bucket_expr($p['interval_sec']);
     $sel    = implode(', ', array_map(fn($c) => "ROUND($fn($c),0) AS $c", $BASE_NUM));
     $sql = "SELECT $bucket AS ts, iface, $sel
             FROM network WHERE $where
-            GROUP BY $bucket, iface ORDER BY ts ASC, iface ASC";
+            GROUP BY $bucket, iface ORDER BY ts ASC, iface ASC $limit_clause";
 }
 
 $stmt = $db->prepare($sql);
@@ -52,7 +53,8 @@ if ($filter_iface !== null && empty($rows)) {
 }
 
 $want = $p['fields_raw'] ? array_flip($p['fields_raw']) : null;
-$b    = fn(int $v): float|int => $divisor === 1 ? $v : round($v / $divisor, 4);
+// $b    = fn(int $v): float|int => $divisor === 1 ? $v : round($v / $divisor, 4);
+$b    = fn(int $v): float|int => $unit === 'bytes' ? $v : round($v / $divisor, 4);
 $add  = fn(string $k, mixed $v) => ($want === null || isset($want[$k])) ? $v : null;
 
 $by_iface = [];
@@ -91,6 +93,5 @@ output([
     'agg'        => $p['agg'],
     'interval_sec' => $p['interval_sec'],
     'unit'       => $unit,
-    'note'       => 'rx_bytes/tx_bytes son contadores acumulados desde boot.',
     'interfaces' => $interfaces,
 ]);
