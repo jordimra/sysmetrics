@@ -40,7 +40,8 @@ sudo nano /etc/environment
 ```
 Añade las rutas y el intervalo al final del archivo (sin usar la palabra `export`):
 ```text
-SYSMETRICS="/media/novedades/www/api"
+SYSMETRICS="/etc/sysmetrics"
+SYSMETRICS_DB="/www/api"
 SYSMETRICS_INTERVAL="10"
 ```
 
@@ -52,29 +53,6 @@ Ejecuta `crontab -e` y añade esta única tarea:
 ```text
 # Vigila el recolector cada minuto. Si no está corriendo (pgrep), lo levanta inyectando el entorno.
 * * * * * set -a; . /etc/environment; pgrep -f collector.sh > /dev/null || "$SYSMETRICS/collector.sh" >> /var/log/collector.log 2>&1
-```
-
-### Paso 3: Configurar el Servidor Web (Docker)
-
-El servidor web (PHP/Apache) corre aislado en Docker, por lo que no puede leer `/etc/environment`. Debemos pasarle su variable a través de un archivo `.env`.
-
-Crea o edita tu archivo en `/etc/docker/xampp/.env`:
-```text
-SYSMETRICS_WEB=/www/api
-```
-
-Levanta el contenedor montando el volumen donde el recolector guarda la base de datos e inyectando el archivo de entorno:
-```bash
-docker run -d \
-	--name xampp \
-	--restart always \
-	--env-file /etc/docker/xampp/.env \
-	-e PUID=0 \
-	-e PGID=0 \
-	-p 41061:22 \
-	-p 41062:80 \
-	-v /media/novedades/www:/www \
-	tomsik68/xampp:latest
 ```
 
 ---
