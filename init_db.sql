@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS docker_stats (
 	ts             INTEGER NOT NULL,
 	container_name TEXT    NOT NULL,
 	cpu_percent    REAL,
-	mem_usage_str  TEXT
+	mem_bytes      INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_docker_ts   ON docker_stats(ts);
 CREATE INDEX IF NOT EXISTS idx_docker_name ON docker_stats(container_name);
