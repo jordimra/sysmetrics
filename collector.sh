@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# =============================================================
-# collector.sh — Recolector de métricas del sistema
-#
-# Cron inicial único:
-#   * * * * * /$SYSMETRICS/collector.sh
-# =============================================================
 
 set -euo pipefail
 

@@ -23,7 +23,7 @@ api/
 
 ## 🚀 Instalación y Configuración
 
-La arquitectura se divide en dos partes: el recolector que corre en el sistema host y la API que se sirve mediante un contenedor Docker.
+La arquitectura se divide en dos partes: el recolector que corre en el sistema host como servicio y la API que se sirve mediante un contenedor Docker.
 
 **Variables de Entorno:**
 El sistema utiliza tres variables clave para funcionar:
@@ -31,28 +31,75 @@ El sistema utiliza tres variables clave para funcionar:
 * `SYSMETRICS_INTERVAL`: Segundos que transcurren entre cada recolección (ej: 10).
 * `SYSMETRICS_WEB`: Ruta interna dentro del contenedor Docker donde la API buscará la BD.
 
-### Paso 1: Configurar el Host (Recolector)
+### Paso 1: Configurar el Host (Variables globales)
 
-Haz que las variables del sistema host sean permanentes editando `/etc/environment`. 
-
+Aunque el servicio tiene sus propias variables, es recomendable que las variables del sistema host sean permanentes editando `/etc/environment` para facilitar tareas de mantenimiento manual.
 ```bash
 sudo nano /etc/environment
 ```
-Añade las rutas y el intervalo al final del archivo (sin usar la palabra `export`):
+Añade las rutas y el intervalo al final del archivo:
 ```text
-SYSMETRICS="/etc/sysmetrics"
-SYSMETRICS_DB="/www/api"
+SYSMETRICS="/opt/sysmetrics"
+SYSMETRICS_DB="/opt/sysmetrics/metrics.db"
 SYSMETRICS_INTERVAL="10"
 ```
 
-### Paso 2: Automatización con Cron (Loop Continuo)
+### Paso 2: Configurar el Recolector como Servicio (systemd)
 
-El recolector se ejecuta en un bucle infinito adaptativo para recolectar datos cada `SYSMETRICS_INTERVAL` segundos. El `cron` solo se encarga de vigilar que el proceso esté vivo y levantarlo si se cae, evitando ejecuciones superpuestas.
+El recolector se ejecuta ahora como un servicio persistente de systemd, lo que garantiza su inicio automático y reinicio en caso de fallo.
 
-Ejecuta `crontab -e` y añade esta única tarea:
-```text
-# Recolector iniciado en el boot.
-@reboot set -a; . /etc/environment; "$SYSMETRICS/collector.sh"
+#### 1. Archivo de servicio
+Crea el archivo `/etc/systemd/system/metrics-collector.service` con el siguiente contenido:
+```ini
+[Unit]
+Description=Recolector de métricas del sistema (collector.sh)
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Variables de entorno para el proceso
+Environment="SYSMETRICS=/opt/sysmetrics"
+Environment="SYSMETRICS_INTERVAL=10"
+
+# Ruta absoluta al script
+ExecStart=/opt/sysmetrics/collector.sh
+
+# Política de reinicio
+Restart=on-failure
+RestartSec=5
+
+# Captura de logs en journalctl
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=collector-metricas
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 2. Activar e iniciar el servicio
+```bash
+# 1. Recargar configuración de systemd
+sudo systemctl daemon-reload
+
+# 2. Habilitar el servicio para el arranque
+sudo systemctl enable metrics-collector.service
+
+# 3. Iniciar el servicio ahora
+sudo systemctl start metrics-collector.service
+```
+
+#### 3. Verificación y monitoreo
+```bash
+# Ver estado del servicio
+sudo systemctl status metrics-collector.service
+
+# Seguir los logs en tiempo real
+sudo journalctl -u metrics-collector.service -f
 ```
 
 ---
