@@ -16,15 +16,14 @@ $p = parse_common_params($FIELDS);
 $db = get_db();
 
 // uptime_human es virtual — se elimina de la query SQL
-$sql_fields = array_diff($p['fields_raw'] ?? $FIELDS, ['uptime_human']);
-$want_human = ($p['fields_raw'] === null) || in_array('uptime_human', $p['fields_raw'] ?? []);
-$cols       = implode(', ', $sql_fields ?: ['uptime_sec','load_1m','users_logged','procs_total']);
-$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
+$sql_fields  = array_diff($p['fields_raw'] ?? $FIELDS, ['uptime_human']);
+$want_human  = ($p['fields_raw'] === null) || in_array('uptime_human', $p['fields_raw'] ?? []);
+$cols        = implode(', ', $sql_fields ?: ['uptime_sec','load_1m','users_logged','procs_total']);
+$order_limit = sql_order_limit($p['limit']);
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, $cols FROM system_info
-            WHERE ts BETWEEN :from AND :to
-            ORDER BY ts ASC $limit_clause";
+            WHERE ts BETWEEN :from AND :to $order_limit";
 } else {
     $fn     = strtoupper($p['agg']);
     $bucket = time_bucket_expr($p['interval_sec']);
@@ -35,11 +34,14 @@ if ($p['agg'] === 'raw') {
     $sql = "SELECT $bucket AS ts, " . implode(', ', $parts) . "
             FROM system_info
             WHERE ts BETWEEN :from AND :to
-            GROUP BY $bucket ORDER BY ts ASC $limit_clause";
+            GROUP BY $bucket $order_limit";
 }
 
 $stmt = $db->prepare($sql);
 $stmt->execute([':from' => $p['from_ts'], ':to' => $p['to_ts']]);
+
+// array_reverse restaura el orden cronológico para el frontend
+$raw_rows = array_reverse($stmt->fetchAll());
 
 $uptime_human = function (int $sec): string {
     $d = intdiv($sec, 86400); $sec %= 86400;
@@ -50,6 +52,7 @@ $uptime_human = function (int $sec): string {
 
 $int_fields = ['uptime_sec','users_logged','procs_total'];
 
+// Inyectamos los datos invertidos
 $rows = array_map(function (array $r) use ($int_fields, $want_human, $uptime_human)
 {
 	$times = ts_format((int)$r['ts']);
@@ -67,7 +70,7 @@ $rows = array_map(function (array $r) use ($int_fields, $want_human, $uptime_hum
         $out['uptime_human'] = $uptime_human((int)$out['uptime_sec']);
     }
     return $out;
-}, $stmt->fetchAll());
+}, $raw_rows);
 
 output([
     'status'       => 'ok',

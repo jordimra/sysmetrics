@@ -35,16 +35,18 @@ function set_headers(): void {
 
 // ── BD ────────────────────────────────────────────────────────────────────────
 
-function get_db(): PDO {
-    if (!file_exists(DB_PATH)) {
+function get_db(): PDO
+{
+	if (!file_exists(DB_PATH)) {
         error_json(503, 'Base de datos no encontrada en ' . DB_PATH . '. ¿Está corriendo el collector?');
     }
-    $pdo = new PDO('sqlite:' . DB_PATH, options: [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-    $pdo->exec('PRAGMA journal_mode=WAL; PRAGMA query_only=ON;');
-    return $pdo;
+	$pdo = new PDO('sqlite:' . DB_PATH, options: [
+		PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+		PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+	]);
+	$pdo->exec('PRAGMA query_only=ON;');
+	
+	return $pdo;
 }
 
 // ── Timestamp ─────────────────────────────────────────────────────────────────
@@ -104,9 +106,8 @@ function parse_common_params(array $allowed_fields): array {
         $fields_raw = $requested;
     }
 
-    $limit = (int)($_GET['limit'] ?? 0);
-    if ($limit < 0) error_json(400, "El 'limit' debe ser un número positivo.");
-
+    $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 0;
+    
     return [
         'range_sec'    => $range_sec,
         'agg'          => $agg,
@@ -167,6 +168,13 @@ function agg_select(string $agg, array $numeric_cols, array $text_cols = []): st
     return implode(', ', $parts);
 }
 
+function sql_order_limit(int $limit, string $secondary_sort = ''): string {
+    $l = ($limit > 0) ? "LIMIT $limit" : "LIMIT " . RAW_LIMIT;
+    $o = "ORDER BY ts DESC";
+    if ($secondary_sort !== '') $o .= ", $secondary_sort";
+    return "$o $l";
+}
+
 // ── Error / Output ────────────────────────────────────────────────────────────
 
 function error_json(int $code, string $msg, array $extra = []): never {
@@ -179,3 +187,4 @@ function output(array $payload): never {
     echo json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     exit;
 }
+

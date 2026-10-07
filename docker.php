@@ -18,8 +18,7 @@ $div_b = match($unit) { 'bytes' => 1, 'kb' => 1024, 'mb' => 1048576, 'gb' => 107
 $filter_container = $_GET['container'] ?? null;
 $where = "ts BETWEEN :from AND :to";
 if ($filter_container !== null) $where .= " AND container_name = :container";
-
-$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
+$order_limit = sql_order_limit($p['limit'], 'mount ASC');
 
 $want = $p['fields_raw'] ? array_flip($p['fields_raw']) : null;
 $b    = fn(int $v): float|int => $unit === 'bytes' ? $v : round($v / $div_b, 4);
@@ -28,8 +27,7 @@ $add  = fn(string $k, mixed $v) => ($want === null || isset($want[$k])) ? $v : n
 if ($p['agg'] === 'raw')
 {
 	$sql = "SELECT ts, container_name, cpu_percent, mem_bytes
-	        FROM docker_stats WHERE $where
-	        ORDER BY ts ASC, container_name ASC $limit_clause";
+	        FROM docker_stats WHERE $where $order_limit";
 }
 else
 {
@@ -40,8 +38,7 @@ else
 	               ROUND($fn(cpu_percent), 2) AS cpu_percent,
 	               ROUND($fn(mem_bytes), 0) AS mem_bytes
 	        FROM docker_stats WHERE $where
-	        GROUP BY $bucket, container_name
-	        ORDER BY ts ASC, container_name ASC $limit_clause";
+	        GROUP BY $bucket, container_name $order_limit";
 }
 
 $stmt = $db->prepare($sql);
@@ -71,7 +68,7 @@ $by_container = array_reduce($rows, function (array $carry, array $r) use ($add,
 $containers = array_map(fn($name, $series) => [
 	'container_name' => $name,
 	'count'          => count($series),
-	'series'         => $series,
+	'series'         => array_reverse($series),
 ], array_keys($by_container), $by_container);
 
 output([

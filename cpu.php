@@ -13,22 +13,24 @@ $p = parse_common_params($FIELDS);
 $db = get_db();
 
 $cols = implode(', ', $p['fields_raw'] ?? $FIELDS);
-$limit_clause = ($p['limit'] > 0) ? "LIMIT " . $p['limit'] : "LIMIT " . RAW_LIMIT;
+$order_limit = sql_order_limit($p['limit']);
 
 if ($p['agg'] === 'raw') {
     $sql = "SELECT ts, $cols FROM cpu
-            WHERE ts BETWEEN :from AND :to
-            ORDER BY ts ASC $limit_clause";
+            WHERE ts BETWEEN :from AND :to $order_limit";
 } else {
     $bucket = time_bucket_expr($p['interval_sec']);
     $sel    = agg_select($p['agg'], $p['fields_raw'] ?? $FIELDS);
     $sql = "SELECT $bucket AS ts, $sel FROM cpu
             WHERE ts BETWEEN :from AND :to
-            GROUP BY $bucket ORDER BY ts ASC $limit_clause";
+            GROUP BY $bucket $order_limit";
 }
 
 $stmt = $db->prepare($sql);
 $stmt->execute([':from' => $p['from_ts'], ':to' => $p['to_ts']]);
+
+// array_reverse restaura el orden cronológico para el frontend ---
+$raw_rows = array_reverse($stmt->fetchAll());
 
 $rows = array_map(function (array $r)
 {
@@ -44,7 +46,7 @@ $rows = array_map(function (array $r)
 		$out[$k] = $v !== null ? (float)$v : null;
 	}
 	return $out;
-}, $stmt->fetchAll());
+}, $raw_rows);
 
 output([
     'status'       => 'ok',
